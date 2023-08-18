@@ -3,6 +3,7 @@ from aiogram import Bot, Dispatcher, executor, types
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
 import openai
+import re
 from config import TOKEN_TG_BOT, OPENAI_API_KEY
 from rezume_parsing import get_rezume
 from vacancy_parsing import get_vacancy
@@ -31,28 +32,34 @@ def get_completion(prompt, model="gpt-3.5-turbo-16k"):
     return response.choices[0].message["content"]
 
 
-@dp.message_handler(commands="start")
+@dp.message_handler(commands=["start"])
 async def start(message: types.Message):
-    await message.answer("Приветики. Я готов написать для тебя уникальное сопроводительное письмо для любой вакансии. \nВведите ссылку на ваше резюме. Например: https://hh.ru/resume/8734e61f0000f3fcf00039ed1f44455a346c36")
+    await message.answer("Приветики. Я готов написать для тебя уникальное сопроводительное письмо для любой вакансии. \nВведите ссылку на ваше резюме. \nНапример: https://hh.ru/resume/8734e61f0000f3fcf00039ed1f44455a346c36")
+    await SomeState.first()  # Переход к первому шагу (если используете FSM)
 
 
-@dp.message_handler(regexp="https://hh\.ru/resume/.*")
+@dp.message_handler(lambda message: not re.match(r"https://hh\.ru/resume/\S+", message.text))
+async def invalid_resume_link(message: types.Message, state: FSMContext):
+    await message.answer("Ошибка: Некорректный формат ссылки на резюме. Пожалуйста, введите ссылку правильно.")
+    await SomeState.first()  # Возвращаемся к началу шага ввода ссылки на резюме
+
+
+@dp.message_handler(regexp=r"https://hh\.ru/resume/\S+")
 async def rezume(message: types.Message, state: FSMContext):
     async with state.proxy() as data:
         data["rezume_url"] = message.text
-    await message.answer("Введите ссылку на интересующую вас вакансию. Например, https://hh.ru/vacancy/84829254")
 
     rezume_url = message.text
-    try:
-        rezume = get_rezume(rezume_url)
-    except Exception as e:
-        await message.answer(f"Ошибка при получении данных о резюме: {e}. Пожалуйста, попробуйте снова или начните с команды /start.")
-        await state.finish()
+    rezume = get_rezume(rezume_url)
+    if not rezume:
+        await message.answer("Ошибка: Резюме не может быть обработано. Пожалуйста, попробуйте снова.")
         return
 
     async with state.proxy() as data:
         data["rezume_data"] = rezume
 
+    await message.answer("Введите ссылку на интересующую вас вакансию. Например, https://hh.ru/vacancy/84829254")
+    await SomeState.next()  # Переход к следующему шагу (если используете FSM)
 
 @dp.message_handler(regexp="https://hh\.ru/vacancy/.*")
 async def vacancy(message: types.Message, state: FSMContext):
@@ -62,8 +69,6 @@ async def vacancy(message: types.Message, state: FSMContext):
     await message.answer("Пишу для вас сопроводительное письмо...")
 
     rezume = get_rezume(rezume_url)
-    print(rezume)
-    assert rezume is not None, "Error"
     vacancy = get_vacancy(vacancy_url)
 
     prompt = f"""
@@ -82,6 +87,7 @@ async def undefined_message(message: types.Message):
         "Введена ерунда) \nНачните, пожалуйста, сначала. \nЧтобы начать пользоваться ботом, используйте команду /start",
         parse_mode="Markdown",
     )
+
 
 if __name__ == "__main__":
     executor.start_polling(dp)
