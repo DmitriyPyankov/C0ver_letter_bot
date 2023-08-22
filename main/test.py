@@ -3,7 +3,6 @@ from aiogram import Bot, Dispatcher, executor, types
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
 import openai
-import re
 from config import TOKEN_TG_BOT, OPENAI_API_KEY
 from rezume_parsing import get_rezume
 from vacancy_parsing import get_vacancy
@@ -31,55 +30,102 @@ def get_completion(prompt, model="gpt-3.5-turbo-16k"):
     )
     return response.choices[0].message["content"]
 
+# Вместо этой функции, вы можете использовать свою логику для отправки сообщений
+async def send_message(message: types.Message, text: str, reply_markup: types.InlineKeyboardMarkup = None):
+    await message.reply(text, reply_markup=reply_markup)
 
-@dp.message_handler(commands=["start"])
-async def start(message: types.Message):
-    await message.answer("Приветики. Я готов написать для тебя уникальное сопроводительное письмо для любой вакансии. \nВведите ссылку на ваше резюме. \nНапример: https://hh.ru/resume/8734e61f0000f3fcf00039ed1f44455a346c36")
-    await SomeState.first()  # Переход к первому шагу (если используете FSM)
-
-
-@dp.message_handler(lambda message: not re.match(r"https://hh\.ru/resume/\S+", message.text))
-async def invalid_resume_link(message: types.Message, state: FSMContext):
-    await message.answer("Ошибка: Некорректный формат ссылки на резюме. Пожалуйста, введите ссылку правильно.")
-    await SomeState.first()  # Возвращаемся к началу шага ввода ссылки на резюме
-
-
-@dp.message_handler(regexp=r"https://hh\.ru/resume/\S+")
-async def rezume(message: types.Message, state: FSMContext):
-    async with state.proxy() as data:
-        data["rezume_url"] = message.text
-
-    rezume_url = message.text
-    rezume = get_rezume(rezume_url)
-    if not rezume:
-        await message.answer("Ошибка: Резюме не может быть обработано. Пожалуйста, попробуйте снова.")
-        return
-
-    async with state.proxy() as data:
-        data["rezume_data"] = rezume
-
-    await message.answer("Введите ссылку на интересующую вас вакансию. Например, https://hh.ru/vacancy/84829254")
-    await SomeState.next()  # Переход к следующему шагу (если используете FSM)
-
-@dp.message_handler(regexp="https://hh\.ru/vacancy/.*")
-async def vacancy(message: types.Message, state: FSMContext):
-    async with state.proxy() as data:
-        rezume_url = data["rezume_url"]
-    vacancy_url = message.text
-    await message.answer("Пишу для вас сопроводительное письмо...")
-
-    rezume = get_rezume(rezume_url)
-    vacancy = get_vacancy(vacancy_url)
-
-    prompt = f"""
-    Напиши сопроводительное письмо на основе описания резюме и вакансии, текст которых выделен в тройные кавычки.
-    ссылка на резюме: '''{rezume}'''
-    сслылка на вакансию: '''{vacancy}'''
-    """
-    response = get_completion(prompt)
-    await message.answer(response)
+@dp.message_handler(commands="start")
+async def start(message: types.Message, state: FSMContext):
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton('FIO', callback_data='get_fio'))
+    markup.add(types.InlineKeyboardButton('rezume', callback_data='get_rezume_url'))
+    markup.add(types.InlineKeyboardButton('vacancy', callback_data='get_vacancy_url'))
+    markup.add(types.InlineKeyboardButton('cover', callback_data='get_cover'))
+    
+    await send_message(message, 'Hello', reply_markup=markup)
     await state.finish()
 
+@dp.callback_query_handler(lambda c: c.data == 'get_rezume_url')
+async def get_rezume_callback(query: types.CallbackQuery, state: FSMContext):
+    await query.answer()
+    
+    await send_message(query.message, '''Введите URL резюме \n(например, https://hh.ru/resume/123) :''')
+    await state.set_state('waiting_for_rezume_url')
+
+@dp.message_handler(lambda message: message.text.startswith('http'), state='waiting_for_rezume_url')
+async def handle_rezume_url(message: types.Message, state: FSMContext):
+    await state.finish() 
+    rezume_url = message.text
+    try:
+        rezume_data = get_rezume(rezume_url)
+        await state.update_data(rezume_data=rezume_data)
+        await send_message(message, "Success saved") 
+        return rezume_data
+        # await send_message(message, rezume_data) 
+    except Exception as e:
+        await message.answer(f"Ошибка при получении данных о резюме. Пожалуйста, попробуйте снова и начните с команды /start.")
+        return  
+
+@dp.callback_query_handler(lambda c: c.data == 'get_vacancy_url')
+async def get_vacancy_callback(query: types.CallbackQuery, state: FSMContext):
+    await query.answer()  # Ответить на callback_query
+    
+    await send_message(query.message, '''Введите URL вакансии \n(например, https://hh.ru/vacancy/123) :''')
+    await state.set_state('waiting_for_vacancy_url')
+
+@dp.message_handler(lambda message: message.text.startswith('http'), state='waiting_for_vacancy_url')
+async def handle_vacancy_url(message: types.Message, state: FSMContext):
+    await state.finish()
+    vacancy_url = message.text
+    try:
+        vacancy_data = get_vacancy(vacancy_url)
+        await state.update_data(vacancy_data=vacancy_data)
+        await send_message(message, "Success saved")
+        # await send_message(message, vacancy_data)
+        return vacancy_data
+    except Exception as e:
+        await message.answer(f"Ошибка при получении данных о вакансии. Пожалуйста, попробуйте снова и начните с команды /start.")
+        return
+
+
+@dp.callback_query_handler(lambda c: c.data == 'get_fio')
+async def get_fio_callback(query: types.CallbackQuery, state: FSMContext):
+    await query.answer()  
+    
+    await send_message(query.message, 'Введите свою имя и фамилию (например, Иван Иванов):')
+    await state.set_state('waiting_for_fio')
+
+@dp.message_handler(lambda message: True, state='waiting_for_fio')
+async def handle_fio(message: types.Message, state: FSMContext):
+    await state.finish()  
+    fio = message.text
+    await state.update_data(fio=fio)
+    await send_message(message, f'Спасибо, вы ввели, а мы сохранили: {fio}')
+    return fio
+
+@dp.callback_query_handler(lambda c: c.data == 'get_cover')
+async def get_cover_callback(query: types.CallbackQuery, state: FSMContext):
+    await query.answer() 
+    
+    # Проверяю, что переменные не пустые
+    async with state.proxy() as data:
+        fio = data.get('fio')
+        rezume_data = data.get('rezume_data')
+        vacancy_data = data.get('vacancy_data')
+        
+        if fio and rezume_data and vacancy_data:
+            prompt = f"""
+                Напиши сопроводительное письмо на основе описания резюме и вакансии, текст которых выделен в тройные кавычки.
+                моё имя: '''{fio}'''
+                ссылка на резюме: '''{rezume_data}'''
+                сслылка на вакансию: '''{vacancy_data}'''
+                """
+            response = get_completion(prompt)
+            await send_message(query.message, response)
+        else:
+            await send_message(query.message, 'Не хватает данных для создания сопроводительного письма.')
+        
+    await state.finish()
 
 @dp.message_handler()
 async def undefined_message(message: types.Message):
@@ -87,7 +133,6 @@ async def undefined_message(message: types.Message):
         "Введена ерунда) \nНачните, пожалуйста, сначала. \nЧтобы начать пользоваться ботом, используйте команду /start",
         parse_mode="Markdown",
     )
-
 
 if __name__ == "__main__":
     executor.start_polling(dp)
