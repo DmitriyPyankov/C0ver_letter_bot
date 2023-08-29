@@ -1,0 +1,13 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "/home/diman/pet/hh_bot/main/vacancy_parsing.py",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        }
+    ]
+}

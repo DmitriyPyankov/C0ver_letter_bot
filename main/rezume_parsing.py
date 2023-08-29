@@ -7,8 +7,9 @@ import time
 def get_rezume(text):
     ua = fake_useragent.UserAgent()
     data = requests.get(url=f"{text}", headers={"user-agent": ua.random})
-    if data.status_code != 200:
-        return
+
+    data.raise_for_status()
+
     soup = BeautifulSoup(data.content, "lxml")
 
     try:
@@ -34,3 +35,4 @@ if __name__ == "__main__":
         "Введите URL резюме (например, 'https://hh.ru/resume/8734e61f0000f3fcf00039ed1f44455a346c36'): "
     )
     REZUME = get_rezume(rezume_url)
+    print(REZUME)
