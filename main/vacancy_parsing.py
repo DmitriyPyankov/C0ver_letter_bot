@@ -3,7 +3,12 @@ from bs4 import BeautifulSoup
 import fake_useragent
 
 
-def get_vacancy(text):
+def get_vacancy(text: str) -> str:
+
+    """
+    Parsing vacanty
+    """
+
     ua = fake_useragent.UserAgent()
     data = requests.get(url=f"{text}", headers={"user-agent": ua.random})
     # if data.status_code != 200:

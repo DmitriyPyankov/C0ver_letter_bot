@@ -1,27 +1,36 @@
 import logging
+import re
+import requests
+from typing import Any, Dict
+
 from aiogram import Bot, Dispatcher, executor, types
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
+from aiogram.dispatcher.filters.state import State, StatesGroup
 import openai
+
 from config import TOKEN_TG_BOT, OPENAI_API_KEY
 from rezume_parsing import get_rezume
 from vacancy_parsing import get_vacancy
 
-
-logging.basicConfig(
-    format="%(levelname)s: %(asctime)s - %(message)s",
-    datefmt="%d-%b-%y %H:%M:%S",
-    level=logging.INFO,
-)
-
-bot = Bot(TOKEN_TG_BOT)
+bot = Bot(token=TOKEN_TG_BOT)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
 openai.api_key = OPENAI_API_KEY
 
 
-def get_completion(prompt, model="gpt-3.5-turbo-16k"):
+class Data(StatesGroup):
+    resume = State()
+    vacancy = State()
+    name = State()
+    fio = State()
+
+
+def get_completion(prompt: str, model: str = "gpt-3.5-turbo-16k") -> str:
+    """
+    Function for using the openai API model "gpt-3.5-turbo-16k"
+    """
     messages = [{"role": "user", "content": prompt}]
     response = openai.ChatCompletion.create(
         model=model,
@@ -32,56 +41,138 @@ def get_completion(prompt, model="gpt-3.5-turbo-16k"):
 
 
 @dp.message_handler(commands="start")
-async def start(message: types.Message):
-    await message.answer("Приветики. Я готов написать для тебя уникальное сопроводительное письмо для любой вакансии. \nВведите ссылку на ваше резюме. Например: https://hh.ru/resume/8734e61f0000f3fcf00039ed1f44455a346c36")
+async def start(message: types.Message, state: FSMContext):
+    """
+    The starting function for the introduction of the fio
+    """
+    await state.set_state(Data.fio)
+    await message.answer("Приветики. Я готов написать для тебя уникальное сопроводительное письмо для любой вакансии. \n\nМеня в любой момент можно прервать командой /cancel\n\nВведите, как к Вам можно обращаться. \nНапример: Иван Иванов")
 
 
-@dp.message_handler(regexp="https://hh\.ru/resume/.*")
-async def rezume(message: types.Message, state: FSMContext):
-    async with state.proxy() as data:
-        data["rezume_url"] = message.text
-    await message.answer("Введите ссылку на интересующую вас вакансию. Например, https://hh.ru/vacancy/84829254")
-
-    rezume_url = message.text
-    try:
-        rezume = get_rezume(rezume_url)
-    except Exception as e:
-        await message.answer(f"Ошибка при получении данных о резюме. Пожалуйста, попробуйте снова и начните с команды /start.")
-        await state.finish()
+@dp.message_handler(commands=['cancel'], state='*')
+@dp.message_handler(lambda message: message.text.lower() == 'cancel', state='*')
+async def cancel_handler(message: types.Message, state: FSMContext):
+    """
+    Allow user to cancel any action
+    """
+    current_state = await state.get_state()
+    if current_state is None:
         return
 
-    async with state.proxy() as data:
-        data["rezume_data"] = rezume
+    logging.info("Cancelling state %r", current_state)
+    await state.finish()
+    await message.answer('Создание сопроводительного письма прервано. Чтобы начать заново, воспользуйтесь командой /start.')
 
 
-@dp.message_handler(regexp="https://hh\.ru/vacancy/.*")
-async def vacancy(message: types.Message, state: FSMContext):
-    async with state.proxy() as data:
-        rezume_url = data["rezume_url"]
-    vacancy_url = message.text
-    await message.answer("Пишу для вас сопроводительное письмо...")
-
-    rezume = get_rezume(rezume_url)
-    print(rezume)
-    assert rezume is not None, "Error"
-    vacancy = get_vacancy(vacancy_url)
-
-    prompt = f"""
-    Напиши сопроводительное письмо на основе описания резюме и вакансии, текст которых выделен в тройные кавычки.
-    ссылка на резюме: '''{rezume}'''
-    сслылка на вакансию: '''{vacancy}'''
+@dp.message_handler(lambda message: re.match(r'[^а-яА-ЯёЁ\']', message.text), state=Data.fio)
+async def process_failed_resume(message: types.Message):
     """
+    If FIO is invalid
+    """
+    return await message.reply("Неверный формат ФИО. Введите корректные данные.")
+
+
+@dp.message_handler(state=Data.fio)
+async def process_resume(message: types.Message, state: FSMContext):
+    """
+    Parsing resume
+    """
+    fio = message.text.strip()    
+
+    async with state.proxy() as data:
+        data["fio"] = fio
+    
+    await state.set_state(Data.resume)
+    await message.answer('Введите ссылку на ваше резюме. Например: https://hh.ru/resume/12345"')
+
+@dp.message_handler(lambda message: not re.match(r'https://.*hh\.ru/resume/.*', message.text), state=Data.resume)
+async def process_failed_resume(message: types.Message):
+    """
+    If resume url is invalid
+    """
+    return await message.reply("Неверный формат ссылки на резюме. Введите корректную ссылку.")
+
+
+@dp.message_handler(state=Data.resume)
+async def process_resume(message: types.Message, state: FSMContext):
+    """
+    Parsing resume
+    """
+    resume_url = message.text.strip()    
+    try:
+        resume = get_rezume(resume_url)
+    except Exception:
+        return await message.reply(f"Не удалось распарсить резюме. Введите другую ссылку.")
+
+    async with state.proxy() as data:
+        data["resume_data"] = resume
+        data["resume_url"] = resume_url
+    
+    await state.set_state(Data.vacancy)
+    await message.answer('Введите ссылку на вакансию. Например, https://hh.ru/vacancy/12345')
+
+
+@dp.message_handler(lambda message: not re.match(r'https://.*hh\.ru/vacancy/.*', message.text), state=Data.vacancy)
+async def process_failed_vacancy(message: types.Message):
+    """
+    If vacancy url is invalid
+    """
+    return await message.reply("Неверный формат ссылки на вакансию. Введите корректную ссылку.")
+
+
+@dp.message_handler(state=Data.vacancy)
+async def process_vacancy(message: types.Message, state: FSMContext):
+    """
+    Parsing vacanty
+    """
+    vacancy_url = message.text.strip()
+    try:
+        vacancy = get_vacancy(vacancy_url)
+    except Exception:
+        return await message.reply(f"Не удалось распарсить вакансию. Введите другую ссылку.")
+
+    async with state.proxy() as data:
+        data["vacacny_data"] = vacancy
+        data["vacancy_url"] = vacancy_url
+    
+    await message.answer("Пишу сопроводительное письмо...")
+    await get_covering_letter(message=message, data=await state.get_data())
+    await state.finish()
+    await message.answer("Чтобы начать заново, воспользуйтесь командой /start.")
+
+
+async def get_covering_letter(message: types.Message, data: Dict[str, Any]):
+    """
+    Func for function openai's request
+    """
+    fio = data.get('fio')
+    resume_data = data.get('resume_data')
+    vacancy_data = data.get('vacancy_data')
+    prompt = f"""
+        Напиши сопроводительное письмо на основе описания резюме и вакансии, текст которых выделен в тройные кавычки.
+        Меня зовут: '''{fio}'''
+        Текст резюме: '''{resume_data}'''
+        Текст вакансии: '''{vacancy_data}'''
+        """
     response = get_completion(prompt)
     await message.answer(response)
-    await state.finish()
 
 
 @dp.message_handler()
 async def undefined_message(message: types.Message):
+    """
+    Func for trash random text
+    """
     await message.answer(
         "Введена ерунда) \nНачните, пожалуйста, сначала. \nЧтобы начать пользоваться ботом, используйте команду /start",
         parse_mode="Markdown",
     )
 
+
 if __name__ == "__main__":
+    logging.basicConfig(
+        format="%(levelname)s: %(asctime)s - %(message)s",
+        datefmt="%d-%b-%y %H:%M:%S",
+        level=logging.INFO,
+    )
     executor.start_polling(dp)

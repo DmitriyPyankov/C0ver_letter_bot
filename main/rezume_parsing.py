@@ -2,9 +2,13 @@ import requests
 from bs4 import BeautifulSoup
 import fake_useragent
 import time
+from typing import List
 
 
-def get_rezume(text):
+def get_rezume(text: str) -> List[str]:
+    """
+    Parsing resume
+    """
     ua = fake_useragent.UserAgent()
     data = requests.get(url=f"{text}", headers={"user-agent": ua.random})
 
@@ -32,7 +36,7 @@ def get_rezume(text):
 
 if __name__ == "__main__":
     rezume_url = input(
-        "Введите URL резюме (например, 'https://hh.ru/resume/8734e61f0000f3fcf00039ed1f44455a346c36'): "
+        "Введите URL резюме (например, 'https://hh.ru/resume/12345'): "
     )
     REZUME = get_rezume(rezume_url)
     print(REZUME)
