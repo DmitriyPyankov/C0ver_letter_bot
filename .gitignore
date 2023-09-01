@@ -1,2 +1,4 @@
 main/config.py
 **/__pycache__
+**/.vscode
+**/.dockerignore
