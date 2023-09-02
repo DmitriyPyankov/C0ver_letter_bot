@@ -1,6 +1,6 @@
 import logging
 import re
-import requests
+import os
 from typing import Any, Dict
 
 from aiogram import Bot, Dispatcher, executor, types
@@ -9,9 +9,11 @@ from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 import openai
 
-from config import TOKEN_TG_BOT, OPENAI_API_KEY
 from rezume_parsing import get_rezume
 from vacancy_parsing import get_vacancy
+
+TOKEN_TG_BOT = os.environ.get("TOKEN_TG_BOT")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
 bot = Bot(token=TOKEN_TG_BOT)
 storage = MemoryStorage()
@@ -23,7 +25,6 @@ openai.api_key = OPENAI_API_KEY
 class Data(StatesGroup):
     resume = State()
     vacancy = State()
-    name = State()
     fio = State()
 
 
@@ -46,7 +47,7 @@ async def start(message: types.Message, state: FSMContext):
     The starting function for the introduction of the fio
     """
     await state.set_state(Data.fio)
-    await message.answer("Приветики. Я готов написать для тебя уникальное сопроводительное письмо для любой вакансии. \n\nМеня в любой момент можно прервать командой /cancel\n\nВведите, как к Вам можно обращаться. \nНапример: Иван Иванов")
+    await message.answer("Привет! Я готов написать для Вас уникальное сопроводительное письмо для любой вакансии. \n\nМеня в любой момент можно прервать командой /cancel\n\nВведите, как к Вам можно обращаться. \nНапример: Иван Иванов")
 
 
 @dp.message_handler(commands=['cancel'], state='*')
@@ -136,7 +137,11 @@ async def process_vacancy(message: types.Message, state: FSMContext):
         data["vacancy_url"] = vacancy_url
     
     await message.answer("Пишу сопроводительное письмо...")
-    await get_covering_letter(message=message, data=await state.get_data())
+    try:
+        await get_covering_letter(message=message, data=await state.get_data())
+    except Exception:
+        await message.answer("Что-то пошло не так...")
+
     await state.finish()
     await message.answer("Чтобы начать заново, воспользуйтесь командой /start.")
 
